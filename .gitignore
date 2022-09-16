@@ -1,0 +1,5 @@
+# exclude all jpg, bmp and txt files
+*.jpg
+*.bmp
+*.txt
+*.png

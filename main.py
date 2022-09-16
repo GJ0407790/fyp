@@ -1,5 +1,4 @@
 import os
-from tkinter import W
 import jpegio as jio
 import numpy as np
 
@@ -11,7 +10,7 @@ def get_prev_qtable(dir, img):
     # Step 1: Initialize hyperparameter for k and n
     sqrt_k = 8
     k = 64
-    n = 0
+    n = 100
 
     img_path = os.path.join(dir, img)
     image = jio.read(img_path)

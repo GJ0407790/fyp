@@ -1,0 +1,14 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+C:/Users/admin/OneDrive/Desktop/FYP/win/turbojpeg.rc
+Winver.h
+C:/Users/admin/OneDrive/Desktop/FYP/win/Winver.h
+winres.h
+C:/Users/admin/OneDrive/Desktop/FYP/win/winres.h
+

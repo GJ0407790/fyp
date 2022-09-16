@@ -1,0 +1,36 @@
+Performing C SOURCE FILE Test HAVE_BUILTIN_CTZL failed with the following output:
+Change Dir: C:/Users/admin/OneDrive/Desktop/FYP/CMakeFiles/CMakeTmp
+
+Run Build Command(s):nmake -f Makefile /nologo cmTC_e9e6a\fast && 	"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.29.30133\bin\HostX86\x86\nmake.exe"  -f CMakeFiles\cmTC_e9e6a.dir\build.make /nologo -L                  CMakeFiles\cmTC_e9e6a.dir\build
+Building C object CMakeFiles/cmTC_e9e6a.dir/src.c.obj
+	"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -E cmake_cl_compile_depends --dep-file=CMakeFiles\cmTC_e9e6a.dir\src.c.obj.d --working-dir=C:\Users\admin\OneDrive\Desktop\FYP\CMakeFiles\CMakeTmp --filter-prefix="Note: including file: " -- C:\PROGRA~2\MIB055~1\2019\COMMUN~1\VC\Tools\MSVC\1429~1.301\bin\Hostx86\x86\cl.exe @C:\Users\admin\AppData\Local\Temp\nm8B0F.tmp
+src.c
+C:\Users\admin\OneDrive\Desktop\FYP\CMakeFiles\CMakeTmp\src.c(1): warning C4013: '__builtin_ctzl' undefined; assuming extern returning int
+Linking C executable cmTC_e9e6a.exe
+	"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -E vs_link_exe --intdir=CMakeFiles\cmTC_e9e6a.dir --rc=C:\PROGRA~2\WI3CF2~1\10\bin\100190~1.0\x86\rc.exe --mt=C:\PROGRA~2\WI3CF2~1\10\bin\100190~1.0\x86\mt.exe --manifests -- C:\PROGRA~2\MIB055~1\2019\COMMUN~1\VC\Tools\MSVC\1429~1.301\bin\Hostx86\x86\link.exe /nologo @CMakeFiles\cmTC_e9e6a.dir\objects1.rsp @C:\Users\admin\AppData\Local\Temp\nm8B6E.tmp
+LINK Pass 1: command "C:\PROGRA~2\MIB055~1\2019\COMMUN~1\VC\Tools\MSVC\1429~1.301\bin\Hostx86\x86\link.exe /nologo @CMakeFiles\cmTC_e9e6a.dir\objects1.rsp /out:cmTC_e9e6a.exe /implib:cmTC_e9e6a.lib /pdb:C:\Users\admin\OneDrive\Desktop\FYP\CMakeFiles\CMakeTmp\cmTC_e9e6a.pdb /version:0.0 /machine:X86 /debug /INCREMENTAL /subsystem:console kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTFILE:CMakeFiles\cmTC_e9e6a.dir/intermediate.manifest CMakeFiles\cmTC_e9e6a.dir/manifest.res" failed (exit code 1120) with the following output:
+src.c.obj : error LNK2019: unresolved external symbol ___builtin_ctzl referenced in function _main
+cmTC_e9e6a.exe : fatal error LNK1120: 1 unresolved externals
+NMAKE : fatal error U1077: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"' : return code '0xffffffff'
+Stop.
+NMAKE : fatal error U1077: '"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.29.30133\bin\HostX86\x86\nmake.exe"' : return code '0x2'
+Stop.
+
+
+Source file was:
+int main(int argc, char **argv) { unsigned long a = argc;  return __builtin_ctzl(a); }
+Looking for a ASM_NASM compiler failed with the following output:
+-- The ASM_NASM compiler identification is unknown
+-- Didn't find assembler
+CMake Error at CMakeLists.txt:2 (project):
+  No CMAKE_ASM_NASM_COMPILER could be found.
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "ASM_NASM" or the CMake cache entry CMAKE_ASM_NASM_COMPILER to the
+  full path to the compiler, or to the compiler name if it is in the PATH.
+
+
+-- Configuring incomplete, errors occurred!
+See also "C:/Users/admin/OneDrive/Desktop/FYP/simd/CMakeFiles/CheckASM_NASM/CMakeFiles/CMakeOutput.log".
+See also "C:/Users/admin/OneDrive/Desktop/FYP/simd/CMakeFiles/CheckASM_NASM/CMakeFiles/CMakeError.log".
+
