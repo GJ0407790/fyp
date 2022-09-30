@@ -4,7 +4,3 @@
 *.txt
 *.png
 *.TIF*
-*.csv
-
-# include the Result directory
-!Result/
