@@ -1,17 +1,16 @@
-# This is just a copy from main.ipynb for batch processing
-
 # import relevant libraries
-import os, sys, subprocess
-from tqdm.autonotebook import tqdm
-import jpegio as jio
+import os, sys, subprocess, threading, random
+import multiprocessing as mp
+from unittest import result
 import numpy as np
+import jpegio as jio
 from PIL import Image
 import pandas as pd
 
 # Step 1: Initialize hyperparameter for k and n
 sqrt_k = 8
 k = 64
-n = 70
+n = 136
 
 # for traversing in zigzag order
 zigzag = [
@@ -30,7 +29,7 @@ def get_qtable_ctable_from_jpg(path):
     image = jio.read(path)
     return np.copy(image.quant_tables[0]), np.copy(image.coef_arrays[0])
 
-# Generates the histogram fro coefficient arrays
+# Generates the histogram from coefficient arrays
 # Calculate the occurence from the same position in the block (1 to 64)
 # Outputs a tuple (histogram, rmin), where rmin is the min value in histogram for comparison
 def generate_hist_from_coeff(ctable):
@@ -49,33 +48,17 @@ def generate_hist_from_coeff(ctable):
     num_blocks = (num_h) * (num_w)
 
     # transpose is to arrange the blocks into 2d matrix of blocks
-    blocks = ctable.reshape(num_h, sqrt_k, num_w, sqrt_k).transpose(0, 2, 1, 3)
-    # print("Shape of blocks: " + str(blocks.shape) + ", type: " + str(blocks.dtype))
+    coefficients = ctable.reshape(num_h, sqrt_k, num_w, sqrt_k) \
+                         .transpose(1, 3, 0, 2) \
+                         .reshape(k, num_blocks)
 
-    # counts[i] store the value from the i-th position in 8x8 block
-    counts = np.ndarray((k, num_blocks), dtype=np.int32)
+    histograms = []
 
-    for r in range(num_h):
-        for c in range(num_w):
-            for br in range(sqrt_k):
-                for bc in range(sqrt_k):
-                    counts[zigzag[br][bc], r * num_w + c] = blocks[r, c, br, bc]
-    
-    rmin = counts.min()
-    rmax = counts.max()
-    # print("Shape of counts: " + str(counts.shape))
-    # print("The range of values is [{rmin}, {rmax}]".format(rmin=rmin, rmax=rmax))
+    for coefficient in coefficients:
+        low, up = coefficient.min(), coefficient.max()
+        histograms.append(np.histogram(coefficient, bins=range(low, up + 2), density=False))
 
-    # the range of the value in histogram lies within [rmin, rmax]
-    rlen = rmax - rmin + 1
-
-    histograms = np.zeros((k, rlen), dtype=np.int32)
-    for i in range(k):
-        for j in range(counts.shape[1]):
-            # shift by rmin
-            histograms[i][counts[i][j] - rmin] += 1
-
-    return histograms, rmin
+    return histograms
 
 # Save image into bmp format for compression purpose
 def save_img_as_bmp(img_path, crop_len, output_img):
@@ -88,9 +71,6 @@ def save_img_as_bmp_box(img_path, left, upper, right, lower, output_img):
     with Image.open(img_path) as im:
         im_crop = im.crop((left, upper, right, lower))
         im_crop.save(output_img)
-
-# with Image.open("temp.bmp") as im_test:
-#     print("The size of image is ({h}, {w})".format(h=im_test.height, w=im_test.width))
 
 # Write the latest quantization table into qm.txt for compression later
 def write_latest_qtable(qtable, output_file='qm.txt'):
@@ -113,20 +93,30 @@ def compress_with_qtable(qtable_file, outfile, img):
     subprocess.run(cjpeg + ' -qtable {qtable} -outfile {outfile} {img}'.format(qtable=qtable_file, outfile=outfile, img=img))
 
 # Compresses the given img to jpeg following the quality factor
-def compress_with_quality(quality, outfile, img):
+def compress_with_quality(quality, outfile, img, is_photoshop=True):
     cjpeg = os.path.join('libjpeg-turbo', 'cjpeg')
-    subprocess.run(cjpeg + ' -quality {quality} -outfile {outfile} {img}'.format(quality=quality, outfile=outfile, img=img))
+    if is_photoshop:
+        compress_with_qtable(os.path.join('Photoshop', str(quality) + '.txt'), outfile, img)
+    else:
+        subprocess.run(cjpeg + ' -quality {quality} -outfile {outfile} {img}'.format(quality=quality, outfile=outfile, img=img))
+
+# Compresses the given img to jpeg using the tables under Custom directory
+def compress_with_custom(quality, outfile, img):
+    table = random.choice(os.listdir(os.path.join('Custom', quality)))
+    compress_with_qtable(os.path.join('Custom', quality, table), outfile, img)
+
 
 # Generate histograms for constant matrix with all elements equal i
 def generate_hist_from_const_qtable(i):
-    write_const_mat(i)
+    pname = mp.current_process().name
+    const_qtable_file = f'qtable_{pname}.txt'
+    latest_qtable_file = f'qm_{pname}.txt'
+    first_compress_source = f'temp_{pname}.bmp'
+    first_compress_target = f'temp_{pname}.jpg'
+    second_compress_source = f'res_{pname}.bmp'
+    second_compress_target = f'res_{pname}.jpg'
 
-    const_qtable_file='qtable.txt'
-    latest_qtable_file='qm.txt'
-    first_compress_source='temp.bmp'
-    first_compress_target='temp.jpg'
-    second_compress_source='res.bmp'
-    second_compress_target='res.jpg'
+    write_const_mat(i, const_qtable_file)
 
     # compress using the constant matrix
     compress_with_qtable(qtable_file=const_qtable_file, outfile=first_compress_target, img=first_compress_source)
@@ -138,56 +128,79 @@ def generate_hist_from_const_qtable(i):
     compress_with_qtable(qtable_file=latest_qtable_file, outfile=second_compress_target, img=second_compress_source)
 
     # get the coefficient array in res.jpg
-    curr_qtable, curr_ctable = get_qtable_ctable_from_jpg(second_compress_target)
+    _, curr_ctable = get_qtable_ctable_from_jpg(second_compress_target)
+
+    os.remove(const_qtable_file)
+    os.remove(first_compress_target)
+    os.remove(second_compress_source)
+    os.remove(second_compress_target)
 
     return generate_hist_from_coeff(curr_ctable)
 
 # Generate a list of histograms for different constant matrix 
 # Outputs (histograms, mins) where histograms is the list of histogram and mins is the list of minimum value in each histogram
-def generate_all_hist(length):
-    histograms = []
-    mins = []
+def generate_all_hist(max_n):
+    histograms_lst = []
 
-    for i in range(1, length + 1):
-        hist, rmin = generate_hist_from_const_qtable(i)
-        histograms.append(hist)
-        mins.append(rmin)
-        # print("Finish process for x={i}".format(i=i))
+    for i in range(1, max_n + 1):
+        histograms_lst.append(generate_hist_from_const_qtable(i))
     
-    return histograms, mins
-
+    return histograms_lst
+    
 # Calculate the chi square distance between two histograms
-def compare_two_histogram(hist1, rmin1, hist2, rmin2):
-    rmax1, rmax2 = rmin1 + len(hist1) - 1, rmin2 + len(hist2) - 1
+def compare_two_histogram(hist1, hist2):
+    # We always let hist1 be smaller than hist2
+    if hist1[1][0] > hist2[1][0]:
+        hist1, hist2 = hist2, hist1
 
-    # can split into three segments: 
-    # 1: (min(rmin1, rmin2), max(rmin1, rmin2)) --> (l, ml)
-    # 2: (max(rmin1, rmin2), min(rmax1, rmax2)) --> (ml, mr)
-    # 3: (min(rmax1, rmax2), max(rmax1, rmax2)) --> (mr, r)
-    l, r = min(rmin1, rmin2), max(rmax1, rmax2)
+    freq1, bin1 = hist1
+    freq2, bin2 = hist2
 
     chi_dist = 0
+    rmin1, rmax1 = bin1[0], bin1[0] + len(freq1) - 1 
+    rmin2, rmax2 = bin2[0], bin2[0] + len(freq2) - 1 
 
-    for i in range(l, r + 1):
-        # we use x to represent hist1, y to represent hist2
-        # i not in [rmin1, rmax1] means it is out of bound, let it be 0
-        x = 0 if i < rmin1 or i > rmax1 else hist1[i - rmin1]
-        y = 0 if i < rmin2 or i > rmax2 else hist2[i - rmin2]
+    if rmax1 < rmin2:
+        # The two histograms have no overlap
+        chi_dist = np.sum(np.square(freq1)) + np.sum(np.square(freq2))
+    elif rmax2 <= rmax1:
+        # The second histogram falls fully in range of first histogram
+        chi_dist = np.sum(np.square(freq1[:(rmin2 - rmin1)])) + \
+                   np.sum(np.square(freq1[(rmax2 - rmin1 + 1):]))
         
-        if x + y == 0:
-            continue
+        overlap1 = freq1[(rmin2 - rmin1):(rmax2 - rmin1 + 1)]
+        overlap2 = freq2
 
-        chi_dist += ((x - y) ** 2) / (x + y)
+        temp = overlap1 - overlap2
+        temp = np.square(temp)
+        divisor = overlap1 + overlap2
+        divisor[divisor == 0] = 1 # To avoid dividing by 0
+        temp = temp / divisor
+
+        chi_dist += np.sum(temp)
+    else:
+        # Sum the non-overlapped area
+        chi_dist = np.sum(np.square(freq1[:(rmin2 - rmin1)])) + np.sum(np.square(freq2[(rmax1 - rmin2 + 1):]))
+        # Overlap area
+        overlap1 = freq1[(rmin2 - rmin1):]
+        overlap2 = freq2[: (rmax1 - rmin2 + 1)]
+
+        temp = overlap1 - overlap2
+        temp = np.square(temp)
+        divisor = overlap1 + overlap2
+        divisor[divisor == 0] = 1 # To avoid dividing by 0
+        temp = temp / divisor
+
+        chi_dist += np.sum(temp)
 
     return chi_dist
 
 # pos in range [0, 63]
-def find_val_for_pos(i, D_jref, Dmin, hists, mins):
+def find_val_for_pos(i, D_jref, histograms_lst):
     chi_dists = []
 
-    # hist = hists[idx], min = mins[idx]
-    for idx, hist in enumerate(hists):
-        chi_dists.append((idx + 1, compare_two_histogram(D_jref, Dmin, hist[i], mins[idx])))
+    for idx, histograms in enumerate(histograms_lst):
+        chi_dists.append((idx + 1, compare_two_histogram(D_jref, histograms[i])))
 
     # sort chi_dists according to chi_dist computed
     chi_dists.sort(key=lambda x: x[1])
@@ -197,41 +210,35 @@ def find_val_for_pos(i, D_jref, Dmin, hists, mins):
 # Find the second previous quantization table (the essence of the algorithm)
 # img must be a jpeg extension (since we are extracting the quantization table)
 def find_second_latest_qtable(dir, img, length):
+    pname = mp.current_process().name
+    qm_file = f'qm_{pname}.txt'
+    temp_bmp = f'temp_{pname}.bmp'
     img_path = os.path.join(dir, img)
     
     # Get qtable and ctable from the image
     qtable, ctable = get_qtable_ctable_from_jpg(img_path)
 
     # Write the latest quantization table into qm.txt once for this current image
-    write_latest_qtable(qtable, 'qm.txt')
+    write_latest_qtable(qtable, qm_file)
     
     # Save cropped image as temp.bmp
-    save_img_as_bmp(img_path, crop_len=4, output_img='temp.bmp')
+    save_img_as_bmp(img_path, crop_len=4, output_img=temp_bmp)
 
     # Calculate the histogram for the reference histogram D_ref
     # The histogram for each constant qtable after compressing twice
     # Each histogram has length 64 that stores distribution of pos i in histogram[i]
-    D_ref, Dmin = generate_hist_from_coeff(ctable=ctable)
-    hists, mins = generate_all_hist(length)
+    D_ref = generate_hist_from_coeff(ctable=ctable)
+    histograms_lst = generate_all_hist(n)
     
     target_qtable = [1] * length
 
     for i in range(length):
-        target_qtable[i] = find_val_for_pos(i, D_ref[i], Dmin, hists, mins)
+        target_qtable[i] = find_val_for_pos(i, D_ref[i], histograms_lst)
     
-    # print(target_qtable)
-    # restore the target_qtable into 8x8 matrix
-    res = [[1 for i in range(sqrt_k)] for j in range(sqrt_k)]
+    os.remove(qm_file)
+    os.remove(temp_bmp)
 
-    for r in range(sqrt_k):
-        for c in range(sqrt_k):
-            # print(str(zigzag[r][c]) + " " + str(target_qtable[zigzag[r][c]]))
-            if zigzag[r][c] < length:
-                res[r][c] = target_qtable[zigzag[r][c]]
-    
-    # write_latest_qtable(res, 'ans.txt')
-
-    return res
+    return target_qtable
 
 def get_zigzag_order(lst, length):
     temp = np.zeros((length), dtype=np.int32)
@@ -243,14 +250,10 @@ def get_zigzag_order(lst, length):
 
     return temp
 
-def compare_two_table_zigzag(ref, res, length):
-    dct_arr = get_zigzag_order(res, length)
-    return dct_arr
-
 # Pass in crop_width < 0 if want crop_width to be the same as img_width
 # Similarly for crop_height
-def crop_img_into_bmp(img, crop_width=-1, crop_height=-1):
-    with Image.open(img) as im:
+def crop_img_into_bmp(in_img, out_img, crop_width=-1, crop_height=-1):
+    with Image.open(in_img) as im:
         width, height = im.size
         # crop a 64 x 64 patch from the central
         tar_width, tar_height = crop_width, crop_height
@@ -267,13 +270,18 @@ def crop_img_into_bmp(img, crop_width=-1, crop_height=-1):
         
         left, right = width // 2 - tar_width // 2, width // 2 + tar_width // 2
         upper, lower = height // 2 - tar_height // 2, height // 2 + tar_height // 2
-        save_img_as_bmp_box(img, left, upper, right, lower, 'source.bmp')
+        save_img_as_bmp_box(in_img, left, upper, right, lower, out_img)
     return True
 
-def compress_twice_using_qf(QF1, QF2, img, res_df):
-    compress_with_quality(quality=QF1, outfile='source.jpg', img='source.bmp')
-    
-    ref, _ = get_qtable_ctable_from_jpg('source.jpg')
+def compress_twice_using_qf(QF1, QF2, img_dir, img, res_df, has_prev, is_photoshop):
+    pname = mp.current_process().name
+    first_src_img = os.path.join(img_dir, img)
+    first_tar_img = pname + '.jpg'
+    second_src_img = pname + '2.bmp'
+    second_tar_img = pname + '2.jpg'
+
+    compress_with_quality(quality=QF1, outfile=first_tar_img, img=first_src_img, is_photoshop=is_photoshop)
+    ref, _ = get_qtable_ctable_from_jpg(first_tar_img)
 
     # Find the first length elements in zigzag order
     length = 15
@@ -282,67 +290,237 @@ def compress_twice_using_qf(QF1, QF2, img, res_df):
         temp = get_zigzag_order(lst=ref, length=length)
         temp = temp.tolist()
 
-        # Assign the n to be the max of the first 15 elements of the reference table
-        global n
-        n = max(temp)
+        if not has_prev:
+            temp.insert(0, 'Reference table')
+            res_df = pd.concat([res_df, pd.DataFrame([temp], columns=res_df.columns)], ignore_index=True)
 
-        temp.insert(0, 'Reference table')
-        res_df = pd.concat([res_df, pd.DataFrame([temp], columns=res_df.columns)], ignore_index=True)
+    save_img_as_bmp(first_tar_img, 0, second_src_img)
+    compress_with_quality(quality=QF2, outfile=second_tar_img, img=second_src_img, is_photoshop=False)
 
-    save_img_as_bmp('source.jpg', 0, 'source.bmp')
-    compress_with_quality(quality=QF2, outfile='source.jpg', img='source.bmp')
+    res = find_second_latest_qtable('.', second_tar_img, length=length)
 
-    res = find_second_latest_qtable('.', 'source.jpg', length=length)
-
-    dct_arr = get_zigzag_order(lst=res, length=length)
-    dct_arr = dct_arr.tolist()
+    dct_arr = res
     dct_arr.insert(0, img)
-    
+
     res_df = pd.concat([res_df, pd.DataFrame([dct_arr], columns=res_df.columns)], ignore_index=True)
+
+    # Clear the images
+    os.remove(first_tar_img)
+    os.remove(second_src_img)
+    os.remove(second_tar_img)
+
     return res_df
 
-def compress_twice_result(csv_file):
-    df = pd.read_csv(csv_file)
-    file_tiff = df[['File', 'TIFF']].head(2)
+def compress_twice_using_custom(QF1, QF2, img_dir, img, res_df):
+    pname = mp.current_process().name
+    first_src_img = os.path.join(img_dir, img)
+    first_tar_img = pname + '.jpg'
+    second_src_img = pname + '2.bmp'
+    second_tar_img = pname + '2.jpg'
 
-    Q1s = [85]
-    Q2s = [90]
+    compress_with_custom(quality=QF1, outfile=first_tar_img, img=first_src_img)
+    ref, _ = get_qtable_ctable_from_jpg(first_tar_img)
 
-    for QF2 in Q2s:
-        for QF1 in Q1s:
-            # Write the res_df into csv
-            columns = ['File'] + ['DCT_{i}'.format(i=i) for i in range(1, 16)]
-            res_df = pd.DataFrame(columns=columns)
+    # Find the first length elements in zigzag order
+    length = 15
 
-            print('Evaluating result for QF1={QF1} and QF2={QF2}:'.format(QF1=QF1, QF2=QF2))
-            
-            for index, row in tqdm(file_tiff.iterrows(), total=file_tiff.shape[0]):
-                img = row['File'] + '.TIF'
-                url = row['TIFF']
+    # Write the reference table first, since the table can vary
+    temp = get_zigzag_order(lst=ref, length=length)
+    temp = temp.tolist()
+    temp.insert(0, 'Reference table')
+    res_df = pd.concat([res_df, pd.DataFrame([temp], columns=res_df.columns)], ignore_index=True)
 
-                # Download the image
-                subprocess.run('wget {url}'.format(url=url))
+    save_img_as_bmp(first_tar_img, 0, second_src_img)
+    compress_with_custom(quality=QF2, outfile=second_tar_img, img=second_src_img)
 
-                if not crop_img_into_bmp(img, 64, 64):
-                    os.remove(img)
-                    continue
+    res = find_second_latest_qtable('.', second_tar_img, length=length)
 
-                
-                res_df = compress_twice_using_qf(QF1, QF2, img, res_df)
+    dct_arr = res
+    dct_arr.insert(0, img)
+
+    res_df = pd.concat([res_df, pd.DataFrame([dct_arr], columns=res_df.columns)], ignore_index=True)
+
+    # Clear the images
+    os.remove(first_tar_img)
+    os.remove(second_src_img)
+    os.remove(second_tar_img)
+
+    return res_df
+
+# download images in df where index in [start, end)
+def download_img_batch(output_dir, df, start, end, crop_width, crop_height, idxs=None):
+    is_custom = idxs is not None
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
     
-                # Remove the downloaded image to save storage
-                os.remove(img)
-                
-                # Write to csv file every 50 iterations
-                if (index + 1) % 10 == 0:
-                    date = '6_10_2022'
-                    dir_path = os.path.join('Result', date)
+    if idxs is None:
+        idxs = range(len(df))
 
-                    if not os.path.exists(dir_path):
-                        os.makedirs(dir_path)
+    length = (end - start) // 4
+    threads = []
 
-                    res_csv = 'test_QF1{qf1}_QF2{qf2}.csv'.format(qf1=QF1, qf2=QF2)
-                    res_df.to_csv(os.path.join('Result', '6_10_2022', res_csv), index=False)
+    s = start
+    while s < end:
+        e = min(s + length, end)
+        crop_width = -1 if is_custom else crop_width
+        crop_height = -1 if is_custom else crop_height
+        t = threading.Thread(target=download_img_batch_thread,
+                             args=(output_dir, df, s, e, idxs, crop_width, crop_height))
+        t.start()
+        threads.append(t)
+        s += length
+    
+    for t in threads:
+        t.join()
+
+def download_img_batch_thread(output_dir, df, start, end, idxs, crop_width, crop_height):
+    idxs_subset = idxs[start:end]
+
+    for idx in idxs_subset:
+        img = df.iloc[idx]['File']
+        img_tiff = os.path.join(output_dir, img + '.TIF')
+        img_bmp = os.path.join(output_dir, img + '.bmp')
+
+        if os.path.exists(os.path.join(output_dir, img_bmp)):
+            continue
+
+        url = df.iloc[idx]['TIFF']
+
+        subprocess.run(f'wget {url} -P {output_dir}', 
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT)
+
+        crop_img_into_bmp(img_tiff, img_bmp, crop_width, crop_height)
+        os.remove(img_tiff)
+
+def clear_img_batch(dir):
+    for f in os.listdir(dir):
+        os.remove(os.path.join(dir, f))
+
+def process_img_batch(dir, qf1, qf2, csv_dir, is_photoshop, is_custom=False):
+    columns = ['File'] + ['DCT_{i}'.format(i=i) for i in range(1, 16)]
+    curr_df = pd.DataFrame(columns=columns)
+    
+    csv = mp.current_process().name + '.csv'
+    csv_path = os.path.join(csv_dir, csv)
+    
+    prev_df = pd.DataFrame(columns=columns)
+    has_prev = os.path.exists(csv_path)
+    
+    if has_prev:
+        prev_df = pd.read_csv(csv_path)
+    
+    for f in os.listdir(dir):
+        if not is_custom:
+            curr_df = compress_twice_using_qf(qf1, qf2, dir, f, curr_df, has_prev, is_photoshop)
+        else:
+            curr_df = compress_twice_using_custom(qf1, qf2, dir, f, curr_df)
+    
+    res_df = pd.concat([prev_df, curr_df])
+    res_df.to_csv(csv_path, index=False)    
+
+def set_global_n(max_n):
+    global n
+    n = max_n
 
 if __name__ == '__main__':
-    compress_twice_result('RAISE_1k.csv')
+    if len(sys.argv) < 9:
+        print('Usage: main.py <csv_file> <start> <end> <step> <result_dir> <img_dir_name> <crop_width> <crop_height> <is_photoshop> <max_n>')
+        exit()
+
+    csv_file, start, end, step, result_dir, img_dir_name, crop_width, crop_height, is_photoshop, max_n = sys.argv[1:]
+    start, end, step, crop_width, crop_height = int(start), int(end), int(step), int(crop_width), int(crop_height)
+    is_photoshop = is_photoshop.upper() == 'TRUE'
+    set_global_n(int(max_n))
+
+    # For photoshop
+    df = pd.read_csv(csv_file)
+
+    # Process 50 images in a batch
+    img_dir = os.path.join('Images', img_dir_name)
+    csv_dir = os.path.join('Result', result_dir)
+
+    if not os.path.exists(csv_dir):
+        os.makedirs(csv_dir)
+
+    if not os.path.exists(img_dir):
+        os.makedirs(img_dir)
+    
+    while start < end:
+        end = min(start + step, len(df))
+        download_img_batch(img_dir, df, start, end, crop_width, crop_height)
+
+        processes = []
+        qf1s = range(1, 8) if is_photoshop else [60, 65, 70, 75, 80, 85, 90, 95] 
+        qf2s = [80, 90]
+
+        for qf1 in qf1s:
+            for qf2 in qf2s:
+                p = mp.Process(target=process_img_batch, 
+                               name=f'{qf1}_{qf2}',
+                               args=(img_dir, qf1, qf2, csv_dir, is_photoshop))
+                p.start()
+                processes.append(p)
+
+        for p in processes:
+            p.join()
+
+        print(f'Finish processing for images in range [{start}, {end})')
+        # Clear the downloaded images to save space
+        clear_img_batch(img_dir)
+
+        start = end
+
+
+    # df = pd.read_csv('RAISE_6k.csv')
+
+    # # Process 50 images in a batch
+    # step = 20
+    # total = 500
+    # img_dir = 'images'
+    # csv_dir = os.path.join('Result', '23_10_2022')
+    # choices_file = os.path.join(csv_dir, 'choices.txt')
+
+    # if not os.path.exists(csv_dir):
+    #     os.makedirs(csv_dir)
+    
+    # choices = []
+    # if not os.path.exists(choices_file):
+    #     choices = random.sample(range(len(df)), k=total)
+
+    #     with open(choices_file, 'w') as f:
+    #         for val in choices:
+    #             f.write(f'{val} ')
+    # else:
+    #     with open(choices_file, 'r') as f:
+    #         line = f.readline()
+    #         choices = line.split()
+    #         choices = list(map(lambda x : int(x), choices))
+    
+    # start = 0
+    # while start < total:
+    #     end = min(start + step, len(df))
+    #     download_img_batch(img_dir, df, start, end, choices)
+
+    #     processes = []
+    #     qf1s = ['LOW', 'MID', 'HIGH']
+    #     qf2s = ['LOW', 'MID', 'HIGH']
+
+    #     for qf1 in qf1s:
+    #         for qf2 in qf2s:
+    #             p = mp.Process(target=process_img_batch, 
+    #                            name=f'{qf1}_{qf2}',
+    #                            args=(img_dir, qf1, qf2, csv_dir, True))
+    #             p.start()
+    #             processes.append(p)
+
+    #     for p in processes:
+    #         p.join()
+
+    #     print(f'Finish processing for images in range [{start}, {end})')
+    #     # Clear the downloaded images to save space
+    #     clear_img_batch(img_dir)
+
+    #     start = end
+
